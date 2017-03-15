@@ -32,6 +32,77 @@ along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "w32.h"
 #endif
 
+#ifdef HAVE_GNUTLS3
+const gnutls_cipher_algorithm_t gnutls_ciphers[] =
+  {
+   GNUTLS_CIPHER_ARCFOUR_128,
+   GNUTLS_CIPHER_3DES_CBC,
+   GNUTLS_CIPHER_AES_128_CBC,
+   GNUTLS_CIPHER_AES_256_CBC,
+   GNUTLS_CIPHER_ARCFOUR_40,
+   GNUTLS_CIPHER_CAMELLIA_128_CBC,
+   GNUTLS_CIPHER_CAMELLIA_256_CBC,
+   GNUTLS_CIPHER_AES_192_CBC,
+   GNUTLS_CIPHER_AES_128_GCM,
+   GNUTLS_CIPHER_AES_256_GCM,
+   GNUTLS_CIPHER_CAMELLIA_192_CBC,
+   GNUTLS_CIPHER_SALSA20_256,
+   GNUTLS_CIPHER_ESTREAM_SALSA20_256,
+   GNUTLS_CIPHER_CAMELLIA_128_GCM,
+   GNUTLS_CIPHER_CAMELLIA_256_GCM,
+   GNUTLS_CIPHER_RC2_40_CBC,
+   GNUTLS_CIPHER_DES_CBC,
+   GNUTLS_CIPHER_AES_128_CCM,
+   GNUTLS_CIPHER_AES_256_CCM,
+   GNUTLS_CIPHER_AES_128_CCM_8,
+   GNUTLS_CIPHER_AES_256_CCM_8,
+   GNUTLS_CIPHER_CHACHA20_POLY1305,
+   GNUTLS_CIPHER_NULL
+  };
+
+const gnutls_mac_algorithm_t gnutls_mac_algorithms[] =
+  {
+   GNUTLS_MAC_MD5,
+   GNUTLS_MAC_SHA1,
+   GNUTLS_MAC_RMD160,
+   GNUTLS_MAC_MD2,
+   GNUTLS_MAC_SHA256,
+   GNUTLS_MAC_SHA384,
+   GNUTLS_MAC_SHA512,
+   GNUTLS_MAC_SHA224,
+   GNUTLS_MAC_SHA3_224,
+   GNUTLS_MAC_SHA3_256,
+   GNUTLS_MAC_SHA3_384,
+   GNUTLS_MAC_SHA3_512,
+   GNUTLS_MAC_AEAD,
+   GNUTLS_MAC_UMAC_96,
+   GNUTLS_MAC_UMAC_128,
+   GNUTLS_MAC_NULL
+  };
+
+/* Note this list has to be the same length as gnutls_mac_algorithms! */
+const gnutls_digest_algorithm_t gnutls_digest_algorithms[] =
+  {
+   GNUTLS_DIG_MD5,
+   GNUTLS_DIG_SHA1,
+   GNUTLS_DIG_RMD160,
+   GNUTLS_DIG_MD2,
+   GNUTLS_DIG_SHA256,
+   GNUTLS_DIG_SHA384,
+   GNUTLS_DIG_SHA512,
+   GNUTLS_DIG_SHA224,
+   GNUTLS_DIG_SHA3_224,
+   GNUTLS_DIG_SHA3_256,
+   GNUTLS_DIG_SHA3_384,
+   GNUTLS_DIG_SHA3_512,
+   GNUTLS_DIG_NULL,
+   GNUTLS_DIG_NULL,
+   GNUTLS_DIG_NULL,
+   GNUTLS_DIG_NULL
+  };
+
+#endif
+
 static bool emacs_gnutls_handle_error (gnutls_session_t, int);
 
 static bool gnutls_global_initialized;
@@ -1696,6 +1767,115 @@ This function may also return `gnutls-e-again', or
 
 #endif	/* HAVE_GNUTLS */
 
+#ifdef HAVE_GNUTLS3
+
+/*
+TODO list:
+wipe used memory
+doc strings
+additions to the manual and NEWS
+AEAD?
+list ciphers and MACs? seems API doesn't support it?
+
+EZ> Here and elsewhere, the size of the result is known in advance, so I
+EZ> would avoid allocating a scratch buffer and then copying its data
+EZ> (inside make_unibyte_string) into a newly-allocated string.  Instead,
+EZ> use make_uninit_string, and then pass its string data pointer to the
+EZ> algorithm that produces the digest.
+
+EZ> Wouldn't it be less expensive to access the data on the C level,
+EZ> without consing a list?
+...
+EZ> I think there are more efficient ways of doing this, which don't need
+EZ> an explicit loop.
+...
+EZ> I don't understand why you copy the data here, instead of passing the
+EZ> algorithm a pointer to the original string's data.
+...
+EZ> Likewise here.  In addition, since you are using 'min', shouldn't we
+EZ> signal an error if KEY is too long?
+*/
+
+DEFUN ("gnutls-ciphers", Fgnutls_ciphers, Sgnutls_ciphers, 0, 0, 0,
+       doc: /* Return alist of GnuTLS symmetric cipher descriptions as plists.
+The alist key is the cipher name. */)
+     (void)
+{
+  Lisp_Object ciphers = Qnil;
+
+  for (size_t pos = 0; gnutls_ciphers[pos] != GNUTLS_CIPHER_NULL; pos++)
+    {
+      const gnutls_cipher_algorithm_t gca = gnutls_ciphers[pos];
+
+      Lisp_Object cp = listn (CONSTYPE_HEAP, 11,
+                              // The string description of the cipher ID
+                              build_unibyte_string (gnutls_cipher_get_name (gca)),
+                              // The internally meaningful cipher ID
+                              QCcipher_id,
+                              make_number (gca),
+                              // The type (vs. other GnuTLS objects).
+                              QCtype,
+                              Qgnutls_type_cipher,
+                              // The block size
+                              QCcipher_blocksize,
+                              make_number (gnutls_cipher_get_block_size (gca)),
+                              // The key size
+                              QCcipher_keysize,
+                              make_number (gnutls_cipher_get_key_size (gca)),
+                              // IV size
+                              QCcipher_iv,
+                              make_number (gnutls_cipher_get_iv_size (gca)));
+
+      ciphers = Fcons (cp, ciphers);
+    }
+
+  return ciphers;
+}
+
+DEFUN ("gnutls-macs", Fgnutls_macs, Sgnutls_macs, 0, 0, 0,
+       doc: /* Return alist of GnuTLS mac-algorithm method descriptions as plists.
+The alist key is the mac-algorithm method name. The related digest algorithm
+ID is also included. */)
+     (void)
+{
+  Lisp_Object mac_algorithms = Qnil;
+
+  for (size_t pos = 0; gnutls_mac_algorithms[pos] != GNUTLS_MAC_NULL; pos++)
+    {
+      const gnutls_mac_algorithm_t gma = gnutls_mac_algorithms[pos];
+
+      Lisp_Object mp = Qnil;
+
+      if (gnutls_digest_algorithms[pos] != GNUTLS_DIG_NULL)
+        {
+          // Add the internally meaningful digest-algorithm ID.
+          mp = Fcons (QCdigest_algorithm_id,
+                      Fcons (make_number (gnutls_digest_algorithms[pos]), mp));
+        }
+
+      Lisp_Object mp2 = listn (CONSTYPE_HEAP, 9,
+                              // The string description of the mac-algorithm ID.
+                              build_unibyte_string (gnutls_mac_get_name (gma)),
+                              // The internally meaningful mac-algorithm ID.
+                              QCmac_algorithm_id,
+                              make_number (gma),
+                              // The type (vs. other GnuTLS objects).
+                              QCtype,
+                              Qgnutls_type_mac_algorithm,
+                              // The key size.
+                              QCmac_algorithm_keysize,
+                              make_number (gnutls_mac_get_key_size (gma)),
+                              // The nonce size.
+                              QCmac_algorithm_noncesize,
+                              make_number (gnutls_mac_get_nonce_size (gma)));
+      mac_algorithms = Fcons (CALLN (Fappend, mp2, mp), mac_algorithms);
+    }
+
+  return mac_algorithms;
+}
+
+#endif
+
 DEFUN ("gnutls-available-p", Fgnutls_available_p, Sgnutls_available_p, 0, 0, 0,
        doc: /* Return t if GnuTLS is available in this instance of Emacs.  */)
      (void)
@@ -1752,6 +1932,20 @@ syms_of_gnutls (void)
   DEFSYM (QCverify_flags, ":verify-flags");
   DEFSYM (QCverify_error, ":verify-error");
 
+  DEFSYM (QCcipher_id, ":cipher-id");
+  DEFSYM (QCcipher_blocksize, ":cipher-blocksize");
+  DEFSYM (QCcipher_keysize, ":cipher-keysize");
+  DEFSYM (QCcipher_iv, ":cipher-iv");
+
+  DEFSYM (QCmac_algorithm_id, ":mac-algorithm-id");
+  DEFSYM (QCdigest_algorithm_id, ":digest-algorithm-id");
+  DEFSYM (QCmac_algorithm_noncesize, ":mac-algorithm-noncesize");
+  DEFSYM (QCmac_algorithm_keysize, ":mac-algorithm-keysize");
+
+  DEFSYM (QCtype, ":type");
+  DEFSYM (Qgnutls_type_cipher, "gnutls-symmetric-cipher");
+  DEFSYM (Qgnutls_type_mac_algorithm, "gnutls-mac-algorithm");
+
   DEFSYM (Qgnutls_e_interrupted, "gnutls-e-interrupted");
   Fput (Qgnutls_e_interrupted, Qgnutls_code,
 	make_number (GNUTLS_E_INTERRUPTED));
@@ -1778,6 +1972,9 @@ syms_of_gnutls (void)
   defsubr (&Sgnutls_bye);
   defsubr (&Sgnutls_peer_status);
   defsubr (&Sgnutls_peer_status_warning_describe);
+
+  defsubr (&Sgnutls_ciphers);
+  defsubr (&Sgnutls_macs);
 
   DEFVAR_INT ("gnutls-log-level", global_gnutls_log_level,
 	      doc: /* Logging level used by the GnuTLS functions.
