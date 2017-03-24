@@ -1776,6 +1776,7 @@ doc strings
 additions to the manual and NEWS
 AEAD?
 list ciphers and MACs? seems API doesn't support it?
+cache gnutls-macs and gnutls-ciphers
 
 EZ> Here and elsewhere, the size of the result is known in advance, so I
 EZ> would avoid allocating a scratch buffer and then copying its data
@@ -1833,9 +1834,11 @@ The alist key is the cipher name. */)
 }
 
 DEFUN ("gnutls-macs", Fgnutls_macs, Sgnutls_macs, 0, 0, 0,
-       doc: /* Return alist of GnuTLS mac-algorithm method descriptions as plists.
-The alist key is the mac-algorithm method name. The related digest algorithm
-ID is also included. */)
+       doc: /* Return alist of GnuTLS mac-algorithm method
+descriptions as plists.  Use the value of the alist (extract it with
+`alist-get' for instance) with `gnutls-hash-mac'.  The alist key is
+the mac-algorithm method name. The related digest algorithm ID is also
+included when applicable. */)
      (void)
 {
   Lisp_Object mac_algorithms = Qnil;
@@ -1872,6 +1875,170 @@ ID is also included. */)
     }
 
   return mac_algorithms;
+}
+
+/* When the key is Qnil, we run in digest mode. */
+Lisp_Object
+emacs_gnutls_hash (Lisp_Object method, Lisp_Object key, Lisp_Object input)
+{
+  bool digest_mode = NILP (key);
+  Lisp_Object output = Qnil;
+  int ret = GNUTLS_E_SUCCESS;
+
+  const char* desc = (digest_mode ? "digest" : "hash");
+
+  gnutls_mac_algorithm_t gma = GNUTLS_MAC_UNKNOWN;
+  gnutls_digest_algorithm_t gda = GNUTLS_DIG_UNKNOWN;
+
+  Lisp_Object mac = Qnil;
+  if (STRINGP (method))
+    {
+      mac = XCDR (Fassoc (method, Fgnutls_macs ()));
+    }
+  else if (INTEGERP (method))
+    {
+      if (digest_mode)
+        {
+          gda = XINT (method);
+        }
+      else
+        {
+          gma = XINT (method);
+        }
+    }
+  else
+    {
+      mac = method;
+    }
+
+  if (!NILP (mac) && CONSP (mac))
+    {
+      Lisp_Object v = Fplist_get (mac, digest_mode ? QCdigest_algorithm_id : QCmac_algorithm_id);
+      if (INTEGERP (v))
+        {
+          if (digest_mode)
+            {
+              gda = XINT (v);
+            }
+          else
+            {
+              gma = XINT (v);
+            }
+        }
+    }
+
+  if ( (digest_mode && gda == GNUTLS_MAC_UNKNOWN) ||
+       (!digest_mode && gma == GNUTLS_MAC_UNKNOWN))
+    {
+      error ("GnuTLS %s-method was invalid or not found", desc);
+      return Qnil;
+    }
+
+  gnutls_hmac_hd_t hmac;
+  gnutls_hash_hd_t hash;
+  if (digest_mode)
+    {
+      ret = gnutls_hash_init (&hash, gda);
+    }
+  else
+    {
+      ret = gnutls_hmac_init (&hmac, gma, SSDATA (key), SCHARS (key));
+    }
+
+  if (ret < GNUTLS_E_SUCCESS)
+    {
+      const char* str = gnutls_strerror (ret);
+      if (!str)
+        str = "unknown";
+      error ("GnuTLS %s initialization failed: %s", desc, str);
+      return Qnil;
+    }
+
+  size_t digest_length = digest_mode ? gnutls_hash_get_len (gda) : gnutls_hmac_get_len (gma);
+  void *digest = xzalloc (digest_length);
+
+  if (digest_mode)
+    {
+      ret = gnutls_hash (hash, SSDATA (input), SCHARS (input));
+    }
+  else
+    {
+      ret = gnutls_hmac (hmac, SSDATA (input), SCHARS (input));
+    }
+
+  if (ret < GNUTLS_E_SUCCESS)
+    {
+      if (digest_mode)
+        {
+          gnutls_hash_deinit (hash, digest);
+        }
+      else
+        {
+          gnutls_hmac_deinit (hmac, digest);
+        }
+
+      xfree (digest);
+      const char* str = gnutls_strerror (ret);
+      if (!str)
+        str = "unknown";
+      error ("GnuTLS %s application failed: %s", desc, str);
+      return Qnil;
+    }
+
+  if (digest_mode)
+    {
+      gnutls_hash_output (hash, digest);
+    }
+  else
+    {
+      gnutls_hmac_output (hmac, digest);
+    }
+
+  output = make_unibyte_string (digest, digest_length);
+
+  if (digest_mode)
+    {
+      gnutls_hash_deinit (hash, digest);
+    }
+  else
+    {
+      gnutls_hmac_deinit (hmac, digest);
+    }
+
+  xfree (digest);
+  return output;
+}
+
+DEFUN ("gnutls-hash-mac", Fgnutls_hash_mac, Sgnutls_hash_mac, 3, 3, 0,
+       doc: /* Hash INPUT string with HASH-METHOD and KEY string into a unibyte string.
+
+Returns nil on error. INPUT and KEY should be unibyte strings.
+
+The alist of MAC algorithms can be obtained with `gnutls-macs`. The
+HASH-METHOD may be a string matching a key in that alist, or a plist
+with the `:mac-algorithm-id' numeric property, or the number itself. */)
+     (Lisp_Object hash_method, Lisp_Object key, Lisp_Object input)
+{
+  CHECK_STRING (input);
+  CHECK_STRING (key);
+  return emacs_gnutls_hash (hash_method, key, input);
+}
+
+DEFUN ("gnutls-hash-digest", Fgnutls_hash_digest, Sgnutls_hash_digest, 2, 2, 0,
+       doc: /* Digest INPUT string with HASH-METHOD into a unibyte string.
+
+Returns nil on error. INPUT and KEY should be unibyte strings.
+
+The alist of MAC algorithms can be obtained with `gnutls-macs`. Note
+that some MAC algorithms can't be used as digests, and the name used
+to specify a digest algorithm is the name of the MAC algorithm. The
+DIGEST-METHOD may be a string matching a key in that alist (as long as
+the matching plist has a `:digest-algorithm-id'), or a plist with the
+`:digest-algorithm-id' numeric property, or the number itself. */)
+     (Lisp_Object hash_method, Lisp_Object input)
+{
+  CHECK_STRING (input);
+  return emacs_gnutls_hash (hash_method, Qnil, input);
 }
 
 #endif
@@ -1935,7 +2102,7 @@ syms_of_gnutls (void)
   DEFSYM (QCcipher_id, ":cipher-id");
   DEFSYM (QCcipher_blocksize, ":cipher-blocksize");
   DEFSYM (QCcipher_keysize, ":cipher-keysize");
-  DEFSYM (QCcipher_iv, ":cipher-iv");
+  DEFSYM (QCcipher_iv, ":cipher-iv-size");
 
   DEFSYM (QCmac_algorithm_id, ":mac-algorithm-id");
   DEFSYM (QCdigest_algorithm_id, ":digest-algorithm-id");
@@ -1975,6 +2142,8 @@ syms_of_gnutls (void)
 
   defsubr (&Sgnutls_ciphers);
   defsubr (&Sgnutls_macs);
+  defsubr (&Sgnutls_hash_mac);
+  defsubr (&Sgnutls_hash_digest);
 
   DEFVAR_INT ("gnutls-log-level", global_gnutls_log_level,
 	      doc: /* Logging level used by the GnuTLS functions.
