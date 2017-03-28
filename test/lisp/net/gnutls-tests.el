@@ -27,56 +27,9 @@
   (when (getenv "GNUTLS_TEST_VERBOSE")
     (apply #'message (concat "gnutls-tests: " format-string) args)))
 
+;; Minor convenience to see strings more easily (without binary data).
 (defsubst gnutls-tests-hexstring-equal (a b)
   (string-equal (encode-hex-string a) (encode-hex-string b)))
-
-;; ;;;###autoload
-;; (defcustom nettle-payloads-store-secrets nil
-;;   "Whether the Nettle interface should store secrets in the payloads.
-;; The secrets are: the key, the IV, and the original input.
-;; Set this to t if you're debugging."
-;;   :version "24.4"
-;;   :type 'boolean)
-
-;; (cl-defstruct nettle-payload length data key iv input cipher cipher-mode)
-
-;; (defun nettle-payload-hexdump (payload)
-;;   (encode-hex-string (nettle-payload-data payload)))
-
-;; (defun nettle-payload-fulldump (payload)
-;;   (let ((key (funcall (nettle-payload-key payload)))
-;;         (iv (funcall (nettle-payload-iv payload)))
-;;         (input (funcall (nettle-payload-input payload))))
-;;     (format "%s with cipher %s, key(%d) %S, IV(%d) %S, input(%d) %S => (%d) %s"
-;;             (nettle-payload-cipher-mode payload)
-;;             (nettle-payload-cipher payload)
-;;             (length key) (when key (encode-hex-string key))
-;;             (length iv) (when iv (encode-hex-string iv))
-;;             (length input) (when input (encode-hex-string input))
-;;             (nettle-payload-length payload)
-;;             (nettle-payload-hexdump payload))))
-
-;; (defsubst nettle-make-secret (secret)
-;;   (if nettle-payloads-store-secrets
-;;       (lexical-let ((p (copy-sequence secret)))
-;;         (lambda () p))
-;;     (lambda () nil)))
-
-;; (defun nettle-encrypt (input key iv cipher cipher-mode)
-;;   (make-nettle-payload :length (length input)
-;;                        :cipher cipher
-;;                        :cipher-mode cipher-mode
-;;                        :input (nettle-make-secret input)
-;;                        :key (nettle-make-secret key)
-;;                        :iv (nettle-make-secret iv)
-;;                        :data (nettle-crypt t input key iv cipher cipher-mode)))
-
-;; (defun nettle-decrypt (payload key iv cipher cipher-mode)
-;;   (let ((data (nettle-crypt
-;;                nil
-;;                (nettle-payload-data payload)
-;;                key iv cipher cipher-mode)))
-;;     (substring data 0 (nettle-payload-length payload))))
 
 (defvar gnutls-tests-tested-macs
   (remove-duplicates
@@ -88,8 +41,17 @@
    (append '("AES-128-CCM" "DES-CBC" "CAMELLIA-192-CBC" "AES-128-GCM" "ARCFOUR-40" "3DES-CBC")
            (mapcar 'car (gnutls-ciphers)))))
 
+(defvar gnutls-tests-mondo-strings
+  (list
+   ""
+   "some data"
+   "lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data "
+   "data and more data to go over the block limit!"
+   "data and more data to go over the block limit"
+   (format "some random data %d%d" (random) (random))))
+
 (ert-deftest test-gnutls-000-availability ()
-  "Test the Nettle hashes and ciphers availability"
+  "Test the Nettle hashes and ciphers availability."
   (let ((macs (gnutls-macs))
         (ciphers (gnutls-ciphers)))
     (dolist (name gnutls-tests-tested-macs)
@@ -105,51 +67,53 @@
           (should (plist-get plist prop)))
         (should (eq 'gnutls-symmetric-cipher (plist-get plist :type)))))))
 
-(ert-deftest test-gnutls-001-hashes ()
-  "Test the Nettle hashes and ciphers availability"
-  (let ((macs (gnutls-macs))
-        (inputs '(""
-                  "some data"
-                  "lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data "
-                  "data and more data to go over the block limit!"
-                  "data and more data to go over the block limit")))
+(ert-deftest test-gnutls-001-hashes-digests ()
+  "Test the Nettle hash digests against the built-in `secure-hash'."
+  (let ((macs (gnutls-macs)))
+    ;; These are the digest algorithms currently supported by
+    ;; `secure-hash'. Unfortunately this list can't be obtained
+    ;; programmatically.
     (dolist (sym '(md5 sha1 sha224 sha256 sha384 sha512))
       (let* ((name (upcase (symbol-name sym)))
              (plist (cdr (assoc name macs))))
         (gnutls-tests-message "Checking digest MAC %s %S" name plist)
-        (dolist (input inputs)
-          ;; we use encode-hex-string to ensure the tests are readable
+        (dolist (input gnutls-tests-mondo-strings)
           (should (gnutls-tests-hexstring-equal
                    (gnutls-hash-digest name input)
                    (secure-hash sym input nil nil t))))))))
 
-;; (ert-deftest test-gnutls-001-hashes ()
-;;     "Test the Nettle hashing functions"
-;;     (progn
-;;       ;; we expect at least 7 hash methods
-;;       (should (> (length (nettle-hashes)) 7))
-;;       (let* ((inputs '(""
-;;                        "some data"
-;;                        "lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data lots and lots of data "
-;;                        "data and more data to go over the block limit!"
-;;                        "data and more data to go over the block limit"))
-;;              (algomap '(md5 sha1 sha224 sha256 sha384 sha512))
-;;              ;; only test the algorithms supported by `secure-hash'
-;;              (hashes (delete nil (mapcar
-;;                                   (lambda (x)
-;;                                     (let ((sym (intern (car x))))
-;;                                       (car (member sym algomap))))
-;;                                   (nettle-hashes)))))
-;;       (dolist (hash hashes)
-;;         (dolist (input inputs)
-;;           ;; we use encode-hex-string to ensure the tests are readable
-;;           (should (string-equal (encode-hex-string (nettle-hash
-;;                                                     input
-;;                                                     (symbol-name hash)))
-;;                                 (encode-hex-string (secure-hash
-;;                                                     hash
-;;                                                     input
-;;                                                     nil nil t)))))))))
+(ert-deftest test-gnutls-002-hashes-digests ()
+  "Test some Nettle hash digests against pre-defined outputs."
+  (let ((macs (gnutls-macs)))
+    (dolist (test '(("57edf4a22be3c955ac49da2e2107b67a" "12345678901234567890123456789012345678901234567890123456789012345678901234567890" "MD5")
+                    ("d174ab98d277d9f5a5611c2c9f419d9f" "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" "MD5")
+                    ("c3fcd3d76192e4007dfb496cca67e13b" "abcdefghijklmnopqrstuvwxyz" "MD5")
+                    ("f96b697d7cb7938d525a2f31aaf161d0" "message digest" "MD5")
+                    ("900150983cd24fb0d6963f7d28e17f72" "abc" "MD5")
+                    ("0cc175b9c0f1b6a831c399e269772661" "a" "MD5")
+                    ("a9993e364706816aba3e25717850c26c9cd0d89d" "abc" "SHA1")))
+      (destructuring-bind (hash input name) test
+        (let ((plist (cdr (assoc name macs)))
+              result)
+        (gnutls-tests-message "Checking digest MAC %s %S" name plist)
+        (setq result (encode-hex-string (gnutls-hash-digest name input)))
+        (gnutls-tests-message "Test %S => result %S" test result)
+        (should (string-equal result hash)))))))
+
+(ert-deftest test-gnutls-003-hashes-hmacs ()
+  "Test some predefined Nettle HMAC outputs for SHA256."
+  (let ((macs (gnutls-macs)))
+    (dolist (test '(("f5c5021e60d9686fef3bb0414275fe4163bece61d9a95fec7a273746a437b986" "hello\n" "test" "SHA256")
+                    ("46b75292b81002fd873e89c532a1b8545d6efc9822ee938feba6de2723161a67" "more and more data goes into a file to exceed the buffer size" "test" "SHA256")
+                    ("81568ba71fa2c5f33cc84bf362466988f98eba3735479100b4e8908acad87ac4" "more and more data goes into a file to exceed the buffer size" "very long key goes here to exceed the key size" "SHA256")
+                    ("4bc830005783a73b8112f4bd5f4aa5f92e05b51e9b55c0cd6f9a7bee48371def" "more and more data goes into a file to exceed the buffer size" "" "SHA256")))
+      (destructuring-bind (hash input key name) test
+        (let ((plist (cdr (assoc name macs)))
+              result)
+          (gnutls-tests-message "Checking HMAC %s %S" name plist)
+          (setq result (encode-hex-string (gnutls-hash-mac name key input)))
+          (gnutls-tests-message "Test %S => result %S" test result)
+          (should (string-equal result hash)))))))
 
 ;; (ert-deftest test-nettle-002-ciphers ()
 ;;     "Test the Nettle ciphers"
@@ -275,35 +239,6 @@
 ;;                                 0
 ;;                                 (nettle-payload-length payload)))
 ;;               (should (string-equal (encode-hex-string result)
-;;                               expected)))))
-
-;; (ert-deftest test-nettle-004-more-hashes ()
-;;     "Test the Nettle hashes from a test set"
-;;     (let ((tests '(("57edf4a22be3c955ac49da2e2107b67a" "12345678901234567890123456789012345678901234567890123456789012345678901234567890" "md5")
-;;                    ("d174ab98d277d9f5a5611c2c9f419d9f" "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" "md5")
-;;                    ("c3fcd3d76192e4007dfb496cca67e13b" "abcdefghijklmnopqrstuvwxyz" "md5")
-;;                    ("f96b697d7cb7938d525a2f31aaf161d0" "message digest" "md5")
-;;                    ("900150983cd24fb0d6963f7d28e17f72" "abc" "md5")
-;;                    ("0cc175b9c0f1b6a831c399e269772661" "a" "md5")
-;;                    ("a9993e364706816aba3e25717850c26c9cd0d89d" "abc" "sha1")))
-;;           test expected)
-;;       (while (setq test (pop tests))
-;;         ;; (message "Testing 004-hashes %S" test)
-;;         (setq expected (pop test))
-;;         (should (string-equal (encode-hex-string (apply 'nettle-hash test))
-;;                               expected)))))
-
-;; (ert-deftest test-nettle-005-hmac-hashes ()
-;;     "Test the Nettle HMAC hashes from a test set"
-;;     (let ((tests '(("f5c5021e60d9686fef3bb0414275fe4163bece61d9a95fec7a273746a437b986" "hello\n" "test" "sha256")
-;;                    ("46b75292b81002fd873e89c532a1b8545d6efc9822ee938feba6de2723161a67" "more and more data goes into a file to exceed the buffer size" "test" "sha256")
-;;                    ("81568ba71fa2c5f33cc84bf362466988f98eba3735479100b4e8908acad87ac4" "more and more data goes into a file to exceed the buffer size" "very long key goes here to exceed the key size" "sha256")
-;;                    ("4bc830005783a73b8112f4bd5f4aa5f92e05b51e9b55c0cd6f9a7bee48371def" "more and more data goes into a file to exceed the buffer size" "" "sha256")))
-;;           test expected)
-;;       (while (setq test (pop tests))
-;;         ;; (message "Testing 005-hmacs %S" test)
-;;         (setq expected (pop test))
-;;         (should (string-equal (encode-hex-string (apply 'nettle-hmac test))
 ;;                               expected)))))
 
 ;; (ert-deftest test-nettle-006-pbkdf2-RFC-6070 ()
