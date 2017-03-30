@@ -33,12 +33,12 @@
 
 (defvar gnutls-tests-tested-macs
   (remove-duplicates
-   (append '("MD2" "MD5" "SHA1" "SHA224" "SHA256" "SHA384" "SHA512")
+   (append '("MD5" "SHA1" "SHA224" "SHA256" "SHA384" "SHA512")
            (mapcar 'car (gnutls-macs)))))
 
 (defvar gnutls-tests-tested-ciphers
   (remove-duplicates
-   (append '("AES-128-CCM" "DES-CBC" "CAMELLIA-192-CBC" "AES-128-GCM" "ARCFOUR-40" "3DES-CBC")
+   (append '("AES-128-CCM" "DES-CBC" "CAMELLIA-192-CBC" "AES-128-GCM" "3DES-CBC")
            (mapcar 'car (gnutls-ciphers)))))
 
 (defvar gnutls-tests-mondo-strings

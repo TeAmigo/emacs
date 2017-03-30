@@ -32,77 +32,6 @@ along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.  */
 #include "w32.h"
 #endif
 
-#ifdef HAVE_GNUTLS3
-const gnutls_cipher_algorithm_t gnutls_ciphers[] =
-  {
-   GNUTLS_CIPHER_ARCFOUR_128,
-   GNUTLS_CIPHER_3DES_CBC,
-   GNUTLS_CIPHER_AES_128_CBC,
-   GNUTLS_CIPHER_AES_256_CBC,
-   GNUTLS_CIPHER_ARCFOUR_40,
-   GNUTLS_CIPHER_CAMELLIA_128_CBC,
-   GNUTLS_CIPHER_CAMELLIA_256_CBC,
-   GNUTLS_CIPHER_AES_192_CBC,
-   GNUTLS_CIPHER_AES_128_GCM,
-   GNUTLS_CIPHER_AES_256_GCM,
-   GNUTLS_CIPHER_CAMELLIA_192_CBC,
-   GNUTLS_CIPHER_SALSA20_256,
-   GNUTLS_CIPHER_ESTREAM_SALSA20_256,
-   GNUTLS_CIPHER_CAMELLIA_128_GCM,
-   GNUTLS_CIPHER_CAMELLIA_256_GCM,
-   GNUTLS_CIPHER_RC2_40_CBC,
-   GNUTLS_CIPHER_DES_CBC,
-   GNUTLS_CIPHER_AES_128_CCM,
-   GNUTLS_CIPHER_AES_256_CCM,
-   GNUTLS_CIPHER_AES_128_CCM_8,
-   GNUTLS_CIPHER_AES_256_CCM_8,
-   GNUTLS_CIPHER_CHACHA20_POLY1305,
-   GNUTLS_CIPHER_NULL
-  };
-
-const gnutls_mac_algorithm_t gnutls_mac_algorithms[] =
-  {
-   GNUTLS_MAC_MD5,
-   GNUTLS_MAC_SHA1,
-   GNUTLS_MAC_RMD160,
-   GNUTLS_MAC_MD2,
-   GNUTLS_MAC_SHA256,
-   GNUTLS_MAC_SHA384,
-   GNUTLS_MAC_SHA512,
-   GNUTLS_MAC_SHA224,
-   GNUTLS_MAC_SHA3_224,
-   GNUTLS_MAC_SHA3_256,
-   GNUTLS_MAC_SHA3_384,
-   GNUTLS_MAC_SHA3_512,
-   GNUTLS_MAC_AEAD,
-   GNUTLS_MAC_UMAC_96,
-   GNUTLS_MAC_UMAC_128,
-   GNUTLS_MAC_NULL
-  };
-
-/* Note this list has to be the same length as gnutls_mac_algorithms! */
-const gnutls_digest_algorithm_t gnutls_digest_algorithms[] =
-  {
-   GNUTLS_DIG_MD5,
-   GNUTLS_DIG_SHA1,
-   GNUTLS_DIG_RMD160,
-   GNUTLS_DIG_MD2,
-   GNUTLS_DIG_SHA256,
-   GNUTLS_DIG_SHA384,
-   GNUTLS_DIG_SHA512,
-   GNUTLS_DIG_SHA224,
-   GNUTLS_DIG_SHA3_224,
-   GNUTLS_DIG_SHA3_256,
-   GNUTLS_DIG_SHA3_384,
-   GNUTLS_DIG_SHA3_512,
-   GNUTLS_DIG_NULL,
-   GNUTLS_DIG_NULL,
-   GNUTLS_DIG_NULL,
-   GNUTLS_DIG_NULL
-  };
-
-#endif
-
 static bool emacs_gnutls_handle_error (gnutls_session_t, int);
 
 static bool gnutls_global_initialized;
@@ -1804,11 +1733,12 @@ The alist key is the cipher name. */)
 {
   Lisp_Object ciphers = Qnil;
 
-  for (size_t pos = 0; gnutls_ciphers[pos] != GNUTLS_CIPHER_NULL; pos++)
+  const gnutls_cipher_algorithm_t* gciphers = gnutls_cipher_list ();
+  for (size_t pos = 0; gciphers[pos] != GNUTLS_CIPHER_NULL; pos++)
     {
-      const gnutls_cipher_algorithm_t gca = gnutls_ciphers[pos];
+      const gnutls_cipher_algorithm_t gca = gciphers[pos];
 
-      Lisp_Object cp = listn (CONSTYPE_HEAP, 11,
+      Lisp_Object cp = listn (CONSTYPE_HEAP, 15,
                               // The string description of the cipher ID
                               build_unibyte_string (gnutls_cipher_get_name (gca)),
                               // The internally meaningful cipher ID
@@ -1817,6 +1747,12 @@ The alist key is the cipher name. */)
                               // The type (vs. other GnuTLS objects).
                               QCtype,
                               Qgnutls_type_cipher,
+                              // The tag size (nonzero means AEAD).
+                              QCcipher_aead_capable,
+                              (gnutls_cipher_get_tag_size (gca) == 0) ? Qnil : Qt,
+                              // The tag size (nonzero means AEAD).
+                              QCcipher_tagsize,
+                              make_number (gnutls_cipher_get_tag_size (gca)),
                               // The block size
                               QCcipher_blocksize,
                               make_number (gnutls_cipher_get_block_size (gca)),
@@ -1842,23 +1778,25 @@ included when applicable. */)
      (void)
 {
   Lisp_Object mac_algorithms = Qnil;
-
-  for (size_t pos = 0; gnutls_mac_algorithms[pos] != GNUTLS_MAC_NULL; pos++)
+  const gnutls_mac_algorithm_t* macs = gnutls_mac_list ();
+  for (size_t pos = 0; macs[pos] != 0; pos++)
     {
-      const gnutls_mac_algorithm_t gma = gnutls_mac_algorithms[pos];
+      const gnutls_mac_algorithm_t gma = macs[pos];
 
       Lisp_Object mp = Qnil;
 
-      if (gnutls_digest_algorithms[pos] != GNUTLS_DIG_NULL)
+      const char* name = gnutls_mac_get_name (gma);
+      const gnutls_digest_algorithm_t gda = gnutls_digest_get_id (name);
+      if (gda != GNUTLS_DIG_UNKNOWN)
         {
           // Add the internally meaningful digest-algorithm ID.
           mp = Fcons (QCdigest_algorithm_id,
-                      Fcons (make_number (gnutls_digest_algorithms[pos]), mp));
+                      Fcons (make_number (gda), mp));
         }
 
       Lisp_Object mp2 = listn (CONSTYPE_HEAP, 9,
                               // The string description of the mac-algorithm ID.
-                              build_unibyte_string (gnutls_mac_get_name (gma)),
+                              build_unibyte_string (name),
                               // The internally meaningful mac-algorithm ID.
                               QCmac_algorithm_id,
                               make_number (gma),
@@ -2100,7 +2038,10 @@ syms_of_gnutls (void)
   DEFSYM (QCverify_error, ":verify-error");
 
   DEFSYM (QCcipher_id, ":cipher-id");
+  DEFSYM (QCcipher_aead_capable, ":cipher-aead-capable");
   DEFSYM (QCcipher_blocksize, ":cipher-blocksize");
+  DEFSYM (QCcipher_keysize, ":cipher-keysize");
+  DEFSYM (QCcipher_tagsize, ":cipher-tagsize");
   DEFSYM (QCcipher_keysize, ":cipher-keysize");
   DEFSYM (QCcipher_iv, ":cipher-iv-size");
 
