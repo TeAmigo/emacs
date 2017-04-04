@@ -36,6 +36,11 @@
    (append '("MD5" "SHA1" "SHA224" "SHA256" "SHA384" "SHA512")
            (mapcar 'car (gnutls-macs)))))
 
+(defvar gnutls-tests-tested-digests
+  (remove-duplicates
+   (append '("MD5" "SHA1" "SHA224" "SHA256" "SHA384" "SHA512")
+           (mapcar 'car (gnutls-digests)))))
+
 (defvar gnutls-tests-tested-ciphers
   (remove-duplicates
    (append '("AES-128-CCM" "DES-CBC" "CAMELLIA-192-CBC" "AES-128-GCM" "3DES-CBC")
@@ -53,13 +58,20 @@
 (ert-deftest test-gnutls-000-availability ()
   "Test the Nettle hashes and ciphers availability."
   (let ((macs (gnutls-macs))
+        (digests (gnutls-digests))
         (ciphers (gnutls-ciphers)))
     (dolist (name gnutls-tests-tested-macs)
       (let ((plist (cdr (assoc name macs))))
         (gnutls-tests-message "Checking MAC %s %S" name plist)
-        (dolist (prop '(:mac-algorithm-id :mac-algorithm-keysize :mac-algorithm-noncesize))
+        (dolist (prop '(:mac-algorithm-id :mac-algorithm-length :mac-algorithm-keysize :mac-algorithm-noncesize))
           (should (plist-get plist prop)))
         (should (eq 'gnutls-mac-algorithm (plist-get plist :type)))))
+    (dolist (name gnutls-tests-tested-digests)
+      (let ((plist (cdr (assoc name digests))))
+        (gnutls-tests-message "Checking digest %s %S" name plist)
+        (dolist (prop '(:digest-algorithm-id :digest-algorithm-length))
+          (should (plist-get plist prop)))
+        (should (eq 'gnutls-digest-algorithm (plist-get plist :type)))))
     (dolist (name gnutls-tests-tested-ciphers)
       (let ((plist (cdr (assoc name ciphers))))
         (gnutls-tests-message "Checking cipher %s %S" name plist)
