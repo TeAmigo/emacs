@@ -2037,7 +2037,8 @@ This function returns a symbol naming the primitive type of
 @code{marker}, @code{mutex}, @code{overlay}, @code{process},
 @code{string}, @code{subr}, @code{symbol}, @code{thread},
 @code{vector}, @code{window}, or @code{window-configuration}.
-However, if @var{object} is a record, its first slot is returned.
+However, if @var{object} is a record, the type specified by its first
+slot is returned; @ref{Records}.
 
 @example
 (type-of 1)
